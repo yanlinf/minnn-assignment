@@ -106,6 +106,27 @@ def test_dot(test_mn):
     assert is_allclose(h.get_dense_grad(), np.asarray([6., 10.]))
 
 
+def test_conv1d(test_mn):
+    x = np.random.randn(5, 3)
+    w = np.random.randn(4, 3, 2)
+    b = np.random.randn(2)
+    tx, tw, tb = test_mn.astensor(x), test_mn.astensor(w), test_mn.astensor(b)
+    out = test_mn.conv1d(tx, tw, tb)
+    assert is_allclose(out.data, np.asarray([[(x[:4, :] * w[:, :, 0]).sum(), (x[:4, :] * w[:, :, 1]).sum()],
+                                             [(x[1:, :] * w[:, :, 0]).sum(), (x[1:, :] * w[:, :, 1]).sum()]]) + b)
+    g_out = np.random.randn(2, 2)
+    g_b = g_out.sum(0)
+    g_w = g_out[None, None, 0, :] * x[:4, :, None] + g_out[None, None, 1, :] * x[1:, :, None]
+    g_x = np.zeros_like(x)
+    g_x[:4] += (g_out[None, None, 0, :] * w).sum(2)
+    g_x[1:] += (g_out[None, None, 1, :] * w).sum(2)
+    out.accumulate_grad(g_out)
+    out.op.backward()
+    assert is_allclose(tx.get_dense_grad(), g_x)
+    assert is_allclose(tw.get_dense_grad(), g_w)
+    assert is_allclose(tb.get_dense_grad(), g_b)
+
+
 def test_tanh(test_mn):
     x = test_mn.astensor([0., 1., 2., 3.])
     v = test_mn.tanh(x)
@@ -151,6 +172,7 @@ def main(minnn: str):
         ("tanh", 1.),
         ("avg", 1.),
         ("max", 1.),
+        ("conv1d", 1.),
     ]
     for name, weight in test_table:
         test_f = globals()[f"test_{name}"]

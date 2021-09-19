@@ -16,6 +16,8 @@ def get_args():
     parser.add_argument("--test", type=str, default="data/sst-test.txt")
     parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
     parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
+    parser.add_argument("--arch", type=str, default="dan", choices=['dan', 'cnn'])
+    parser.add_argument("--ker_size", type=int, default=5)
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
@@ -81,7 +83,10 @@ def main():
         with open(filename, "r", encoding="utf-8") as f:
             for line in f:
                 tag, words = line.lower().strip().split(" ||| ")
-                yield ([w2i[x] for x in words.split(" ")], t2i[tag])
+                wids = [w2i[x] for x in words.split(" ")]
+                if len(wids) < args.ker_size:
+                    wids += [UNK] * (args.ker_size - len(wids))
+                yield (wids, t2i[tag])
 
     # Read in the data
     train = list(read_dataset(args.train))  # read the train set and map to indexes
@@ -116,16 +121,24 @@ def main():
     EMB_SIZE = args.emb_size
     HID_SIZE = args.hid_size
     HID_LAY = args.hid_layer
-    W_emb = model.add_parameters((nwords, EMB_SIZE))  # Word embeddings
-    W_h = [model.add_parameters((HID_SIZE, EMB_SIZE if lay == 0 else HID_SIZE), initializer='xavier_uniform') for lay in
-           range(HID_LAY)]
-    b_h = [model.add_parameters((HID_SIZE)) for lay in range(HID_LAY)]
-    W_sm = model.add_parameters((ntags, HID_SIZE), initializer='xavier_uniform')  # Softmax weights
-    b_sm = model.add_parameters((ntags))  # Softmax bias
-    pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
+    if args.arch == 'dan':
+        W_emb = model.add_parameters((nwords, EMB_SIZE))  # Word embeddings
+        W_h = [model.add_parameters((HID_SIZE, EMB_SIZE if lay == 0 else HID_SIZE), initializer='xavier_uniform') for
+               lay in
+               range(HID_LAY)]
+        b_h = [model.add_parameters((HID_SIZE)) for lay in range(HID_LAY)]
+        W_sm = model.add_parameters((ntags, HID_SIZE), initializer='xavier_uniform')  # Softmax weights
+        b_sm = model.add_parameters((ntags))  # Softmax bias
+        pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
+    elif args.arch == 'cnn':
+        W_emb = model.add_parameters((nwords, EMB_SIZE))
+        W_conv = model.add_parameters((args.ker_size, EMB_SIZE, HID_SIZE))
+        b_conv = model.add_parameters((HID_SIZE,))
+        W_sm = model.add_parameters((ntags, HID_SIZE))
+        b_sm = model.add_parameters((ntags))
+        pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
 
     W_pretrained = load_fasttext(args.emb, words=i2w)
-
     if W_pretrained.shape[1] == args.emb_size:
         W_emb.data[:] = W_pretrained
     elif args.emb_size < W_pretrained.shape[1]:
@@ -134,8 +147,14 @@ def main():
     else:
         raise ValueError('args.emb_size greater than pretrained emb size')
 
-    # A function to calculate scores for one value
     def calc_scores(words, is_training):
+        if args.arch == 'dan':
+            return calc_scores_dan(words, is_training)
+        elif args.arch == 'cnn':
+            return calc_scores_cnn(words, is_training)
+
+    # A function to calculate scores for one value
+    def calc_scores_dan(words, is_training):
         # word drop in training
         if is_training:
             _word_drop = args.word_drop
@@ -148,6 +167,21 @@ def main():
         for W_h_i, b_h_i in zip(W_h, b_h):
             h = mn.tanh(mn.dot(W_h_i, h) + b_h_i)  # [D]
             h = mn.dropout(h, args.hid_drop, is_training)
+        return mn.dot(W_sm, h) + b_sm  # [C]
+
+    def calc_scores_cnn(words, is_training):
+        # word drop in training
+        if is_training:
+            _word_drop = args.word_drop
+            if _word_drop > 0.:  # here we replace by UNK, there can be better strategies
+                words = [(UNK if s < _word_drop else w) for w, s in zip(words, np.random.random(len(words)))]
+        # --
+        emb = mn.lookup(W_emb, words)  # [len, D]
+        emb = mn.dropout(emb, args.emb_drop, is_training)
+        conv = mn.conv1d(emb, W_conv, b_conv)
+        conv = mn.relu(conv)
+        h = pooling_f(conv, axis=0)
+        h = mn.dropout(h, args.hid_drop, is_training)
         return mn.dot(W_sm, h) + b_sm  # [C]
 
     # dev/test

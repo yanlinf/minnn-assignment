@@ -513,6 +513,87 @@ class OpRelu(Op):
         # --
 
 
+class OpBatchConv1D(Op):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, emb: Tensor, weight: Tensor, bias: Tensor):
+        """
+        :param emb: Tensor of shape (Batch_size, L_in, C_in)
+        :param weight: Tensor of shape (C_out, C_in, Kernel_size)
+        :param bias: Tensor of shape (C_out)
+        :return: Tensor of shape (Batch_size, L_in - Kernel_size + 1, C_out)
+        """
+        bs, l_in, c_in = emb.shape
+        c_out, _, ksize = weight.shape
+        emb_swap = xp.swapaxes(emb.data, 1, 2)
+        out_swap = xp.zeros((bs, c_out, l_in - ksize + 1), dtype=emb.data.dtype)
+        for i in range(l_in - ksize + 1):
+            j = i + ksize
+            out_swap[:, :, i] = (emb_swap[:, None, :, i:j] * weight.data).sum(-1).sum(-1) + bias
+        out = Tensor(xp.swapaxes(out_swap, 1, 2))
+        self.store_ctx(emb=emb, emb_swap=emb_swap, weight=weight, bias=bias, out=out)
+        return
+
+    def backward(self):
+        emb, emb_swap, weight, bias, out = self.get_ctx('emb', 'weight', 'bias', 'out')
+        bs, l_in, c_in = emb.shape
+        c_out, _, ksize = weight.shape
+        if out.grad is not None:
+            g_out_swap = xp.swapaxes(out.grad, 1, 2)  # (bs, c_out, l_in - ksize + 1)
+            g_bias = g_out_swap.sum(0).sum(-1)
+            g_weight = xp.zeros_like(weight.data)
+            g_emb_swap = xp.zeros_like(emb.data)
+            for i in range(l_in - ksize + 1):
+                # (bs, c_out) --repeat-> (bs, c_out, c_in, ksize) --mul emb-> same --sum->
+                g_weight += (g_out_swap[:, :, i, None, None] * emb_swap[:, None, :, i:i + ksize]).sum(0)
+                g_emb_swap[i:i + ksize] += (g_out_swap[:, :, i, None, None] * weight.data).sum(1)
+            g_emb = xp.swapaxes(g_emb_swap, 1, 2)
+            emb.accumulate_grad(g_emb)
+            weight.accumulate_grad(g_weight)
+            bias.accumulate_grad(g_bias)
+
+
+class OpConv1D(Op):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, emb: Tensor, weight: Tensor, bias: Tensor):
+        """
+        :param emb: Tensor of shape (L_in, C_in)
+        :param weight: Tensor of shape (Kernel_size, C_in, C_out)
+        :param bias: Tensor of shape (C_out)
+        :return: Tensor of shape (L_in - Kernel_size + 1, C_out)
+        """
+        l_in, c_in = emb.shape
+        ksize, _, c_out, = weight.shape
+        assert l_in - ksize + 1 > 0
+        out = xp.zeros((l_in - ksize + 1, c_out), dtype=emb.data.dtype)
+        for i in range(l_in - ksize + 1):
+            j = i + ksize
+            out[i, :] = (emb.data[i:j, :, None] * weight.data).sum(0).sum(0) + bias.data
+        out = Tensor(out)
+        self.store_ctx(emb=emb, weight=weight, bias=bias, out=out)
+        return out
+
+    def backward(self):
+        emb, weight, bias, out = self.get_ctx('emb', 'weight', 'bias', 'out')
+        l_in, c_in = emb.shape
+        ksize, _, c_out, = weight.shape
+        if out.grad is not None:
+            g_out = out.grad  # (l_in - ksize + 1, c_out)
+            g_bias = g_out.sum(0)
+            g_weight = xp.zeros_like(weight.data)
+            g_emb = xp.zeros_like(emb.data)
+            for i in range(l_in - ksize + 1):
+                # (c_out,) --repeat-> (ksize, c_in, c_out) --mul emb-> same --sum->
+                g_weight += g_out[None, None, i, :] * emb.data[i:i + ksize, :, None]
+                g_emb[i:i + ksize] += (g_out[None, None, i, :] * weight.data).sum(2)
+            emb.accumulate_grad(g_emb)
+            weight.accumulate_grad(g_weight)
+            bias.accumulate_grad(g_bias)
+
+
 class OpLogloss(Op):
     def __init__(self):
         super().__init__()
@@ -620,4 +701,9 @@ def log_loss(my_scores, tag): return OpLogloss().full_forward(my_scores, tag)
 
 
 def dropout(x, drop, is_training): return OpDropout().full_forward(x, drop, is_training)
-# --
+
+
+def batchconv1d(x, weight, bias): return OpBatchConv1D().full_forward(x, weight, bias)
+
+
+def conv1d(x, weight, bias): return OpConv1D().full_forward(x, weight, bias)
