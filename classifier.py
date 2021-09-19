@@ -15,6 +15,7 @@ def get_args():
     parser.add_argument("--dev", type=str, default="data/sst-dev.txt")
     parser.add_argument("--test", type=str, default="data/sst-test.txt")
     parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
+    parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
@@ -104,7 +105,12 @@ def main():
 
     # Create a model (collection of parameters)
     model = mn.Model()
-    trainer = mn.MomentumTrainer(model, lrate=args.lrate, mrate=args.mrate)
+    if args.opt == 'sgd':
+        trainer = mn.SGDTrainer(model, lrate=args.lrate)
+    elif args.opt == 'momentum':
+        trainer = mn.MomentumTrainer(model, lrate=args.lrate, mrate=args.mrate)
+    elif args.opt == 'adam':
+        trainer = mn.AdamTrainer(model, lrate=args.lrate)
 
     # Define the model
     EMB_SIZE = args.emb_size

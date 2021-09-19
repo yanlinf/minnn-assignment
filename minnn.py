@@ -292,6 +292,53 @@ class MomentumTrainer(Trainer):
         self.momemtum[pid] = m
 
 
+class AdamTrainer(Trainer):
+    def __init__(self, model: Model, lrate=0.001, beta1=0.7, beta2=0.999, eps=1e-8):
+        super().__init__(model)
+        self.lrate = lrate
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+        self.m = []
+        self.v = []
+        self.t = 0
+
+    def update(self):
+        if len(self.m) == 0:
+            self.m = [xp.zeros_like(p.data) for p in self.model.params]
+            self.v = [xp.zeros_like(p.data) for p in self.model.params]
+        assert len(self.m) == len(self.v) == len(self.model.params)
+
+        self.t += 1
+        for pid, p in enumerate(self.model.params):
+            if p.grad is not None:
+                if isinstance(p.grad, dict):  # sparsely update to save time!
+                    self.update_sparse(p, pid, p.grad)
+                else:
+                    self.update_dense(p, pid, p.grad)
+            p.grad = None
+
+    def update_dense(self, p: Parameter, pid: int, g: xp.ndarray):
+        self.m[pid] *= self.beta1
+        self.m[pid] += (1 - self.beta1) * g
+        self.v[pid] *= self.beta2
+        self.v[pid] += (1 - self.beta2) * (g ** 2)
+        mt = self.m[pid] / (1 - self.beta1 ** self.t)
+        vt = self.v[pid] / (1 - self.beta2 ** self.t)
+        p.data -= self.lrate * mt / xp.sqrt(vt + self.eps)
+
+    def update_sparse(self, p: Parameter, pid: int, gs: Dict[int, xp.ndarray]):
+        self.m[pid] *= self.beta1
+        for widx, arr in gs.items():
+            self.m[pid][widx] += (1 - self.beta1) * arr
+        self.v[pid] *= self.beta2
+        for widx, arr in gs.items():
+            self.v[pid][widx] += (1 - self.beta2) * (arr ** 2)
+        mt = self.m[pid] / (1 - self.beta1 ** self.t)
+        vt = self.v[pid] / (1 - self.beta2 ** self.t)
+        p.data -= self.lrate * mt / xp.sqrt(vt + self.eps)
+
+
 # --
 
 ### Graph computation algorithms
