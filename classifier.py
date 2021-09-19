@@ -4,7 +4,9 @@ import time
 import random
 import minnn as mn
 import numpy as np
+import pickle
 import argparse
+
 
 # --
 def get_args():
@@ -12,7 +14,8 @@ def get_args():
     parser.add_argument("--train", type=str, default="data/sst-train.txt")
     parser.add_argument("--dev", type=str, default="data/sst-dev.txt")
     parser.add_argument("--test", type=str, default="data/sst-test.txt")
-    parser.add_argument("--emb_size", type=int, default=64)
+    parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
+    parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
     parser.add_argument("--word_drop", type=float, default=0.2)
@@ -32,6 +35,36 @@ def get_args():
     print(f"RUN: {vars(args)}")
     return args
 
+
+def load_fasttext(filename, words, cutoff=None):
+    t0 = time.time()
+    w2i = {w: i for i, w in enumerate(words)}
+    if False and os.path.exists('data/en.vec.npy'):
+        np.load(filename)
+    else:
+        n_hit = 0
+        with open(filename, 'r', encoding='utf-8') as fin:
+            n, d = map(int, fin.readline().split())
+            X = np.zeros((len(words), d), dtype=float)
+            for i, line in enumerate(fin):
+                if cutoff is not None and i >= cutoff:
+                    break
+                word, vec = line.rstrip().split(' ', 1)
+                if word in w2i:
+                    X[w2i[word]] = np.fromstring(vec, dtype=float, sep=' ')
+                    n_hit += 1
+        idx_unk = w2i['UNK']
+        for i, w in enumerate(words):
+            if w == 'UNK' and i != idx_unk:
+                X[i] = X[idx_unk]
+                n_hit += 1
+
+        np.save('data/en.vec.npy', X)
+        print(f'OOV rate: {1 - n_hit / len(words):.2%}')
+    print(f'Fasttext vectors loaded in {time.time() - t0:.2f} seconds')
+    return X
+
+
 def main():
     args = get_args()
     _seed = os.environ.get("MINNN_SEED", 12341)
@@ -42,6 +75,7 @@ def main():
     w2i = defaultdict(lambda: len(w2i))  # map of word str to word index
     t2i = defaultdict(lambda: len(t2i))  # map of tag str to tag index
     UNK = w2i["<unk>"]  # UNK will be idx=0
+
     def read_dataset(filename):
         with open(filename, "r", encoding="utf-8") as f:
             for line in f:
@@ -60,11 +94,13 @@ def main():
     i2w = ["UNK"] * len(w2i)  # back-mapping: word index to word str
     i2t = ["UNK"] * len(t2i)  # back-mapping: tag index to tag str
     for _w, _i in w2i.items():  # fill the back-mapping of words
-        if _i>0:  # no filling of UNK and new words (queried but not in training because of defaultdict)
+        if _i > 0:  # no filling of UNK and new words (queried but not in training because of defaultdict)
             i2w[_i] = _w
     for _t, _i in t2i.items():  # fill the back-mapping of tags
         i2t[_i] = _t
     # --
+
+    print(f'Vocab size: {len(i2w)}')
 
     # Create a model (collection of parameters)
     model = mn.Model()
@@ -75,11 +111,22 @@ def main():
     HID_SIZE = args.hid_size
     HID_LAY = args.hid_layer
     W_emb = model.add_parameters((nwords, EMB_SIZE))  # Word embeddings
-    W_h = [model.add_parameters((HID_SIZE, EMB_SIZE if lay == 0 else HID_SIZE), initializer='xavier_uniform') for lay in range(HID_LAY)]
+    W_h = [model.add_parameters((HID_SIZE, EMB_SIZE if lay == 0 else HID_SIZE), initializer='xavier_uniform') for lay in
+           range(HID_LAY)]
     b_h = [model.add_parameters((HID_SIZE)) for lay in range(HID_LAY)]
     W_sm = model.add_parameters((ntags, HID_SIZE), initializer='xavier_uniform')  # Softmax weights
     b_sm = model.add_parameters((ntags))  # Softmax bias
     pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
+
+    W_pretrained = load_fasttext(args.emb, words=i2w)
+
+    if W_pretrained.shape[1] == args.emb_size:
+        W_emb.data[:] = W_pretrained
+    elif args.emb_size < W_pretrained.shape[1]:
+        u, s, vt = np.linalg.svd(W_pretrained)
+        W_emb.data[:] = u[:, :args.emb_size] * s[:args.emb_size]
+    else:
+        raise ValueError('args.emb_size greater than pretrained emb size')
 
     # A function to calculate scores for one value
     def calc_scores(words, is_training):
@@ -87,7 +134,7 @@ def main():
         if is_training:
             _word_drop = args.word_drop
             if _word_drop > 0.:  # here we replace by UNK, there can be better strategies
-                words = [(UNK if s<_word_drop else w) for w,s in zip(words, np.random.random(len(words)))]
+                words = [(UNK if s < _word_drop else w) for w, s in zip(words, np.random.random(len(words)))]
         # --
         emb = mn.lookup(W_emb, words)  # [len, D]
         emb = mn.dropout(emb, args.emb_drop, is_training)
@@ -99,6 +146,7 @@ def main():
 
     # dev/test
     dev_records = [-1, 0]  # best_iter, best_acc
+
     def do_test(_data, _iter: int, _name: str, _output: str = None):
         test_correct = 0.0
         _predictions = []
@@ -111,7 +159,7 @@ def main():
             if predict == tag:
                 test_correct += 1
         # --
-        cur_acc = test_correct/len(_data)
+        cur_acc = test_correct / len(_data)
         post_ss = ""
         if _iter is not None:  # in training
             if cur_acc > dev_records[1]:
@@ -141,7 +189,7 @@ def main():
             mn.reset_computation_graph()
             my_scores = calc_scores(words, True)
             my_loss = mn.log_loss(my_scores, tag)
-            my_loss = my_loss * (1./_accu_step)  # div for batch
+            my_loss = my_loss * (1. / _accu_step)  # div for batch
             _cur_loss = mn.forward(my_loss)
             train_loss += _cur_loss * _accu_step
             mn.backward(my_loss)
@@ -157,6 +205,7 @@ def main():
                         my_scores = calc_scores(words, False)
                         my_loss = mn.log_loss(my_scores, tag)
                         return mn.forward(my_loss), my_loss
+
                     # --
                     # computed grad
                     mn.reset_computation_graph()
@@ -171,11 +220,11 @@ def main():
                             pick_idx = np.random.randint(len(p.data.reshape(-1)))
                         p.data.reshape(-1)[pick_idx] += eps
                         loss0, _ = _forw()
-                        p.data.reshape(-1)[pick_idx] -= 2*eps
+                        p.data.reshape(-1)[pick_idx] -= 2 * eps
                         loss1, _ = _forw()
                         p.data.reshape(-1)[pick_idx] += eps
                         # approx_grad = (loss0-loss1) / (2*eps)
-                        approx_grad = (loss0-arr_loss) / eps  # the above might not work with OpMax
+                        approx_grad = (loss0 - arr_loss) / eps  # the above might not work with OpMax
                         calc_grad = p.get_dense_grad().reshape(-1)[pick_idx]
                         assert np.isclose(approx_grad, calc_grad, rtol=1.e-3, atol=1.e-6)
                     # clear
@@ -183,7 +232,7 @@ def main():
                         p.grad = None
                     print("Pass gradient checking!!")
             # =====
-        print("iter %r: train loss/sent=%.4f, time=%.2fs" % (ITER, train_loss/len(train), time.time()-start))
+        print("iter %r: train loss/sent=%.4f, time=%.2fs" % (ITER, train_loss / len(train), time.time() - start))
         # dev
         do_test(dev, ITER, "dev")
         # lrate decay
@@ -193,6 +242,7 @@ def main():
     model.load(args.model)  # load best model
     do_test(dev, None, "dev", args.dev_output)
     do_test(test, None, "test", args.test_output)
+
 
 # --
 # MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 WHICH_XP=numpy python3 classifier.py
