@@ -13,19 +13,26 @@ _WHICH_XP = os.environ.get("WHICH_XP", "np")
 if _WHICH_XP.lower() in ["cupy", "cp"]:
     print("Use cupy!")
     import cupy as xp
+
+
     def asnumpy(x):
         return xp.asnumpy(x)
 else:
     print("Use numpy!")
     import numpy as xp
+
+
     def asnumpy(x):
         return np.asarray(x)
 
 # random seed
 xp.random.seed(12345)
 
+
 def set_random_seed(seed: int):  # allow reset!
     xp.random.seed(seed)
+
+
 # --
 
 # --
@@ -47,11 +54,21 @@ class Tensor:
 
     # accumulate grad
     def accumulate_grad(self, g: xp.ndarray) -> None:
-        raise NotImplementedError
+        if self.grad is None:
+            self.grad = xp.zeros_like(self.data)
+        self.grad += g
 
     # accumulate grad sparsely; note: only for D2 lookup matrix!
     def accumulate_grad_sparse(self, gs: List[Tuple[int, xp.ndarray]]) -> None:
-        raise NotImplementedError
+        if len(self.data.shape) != 2:
+            raise ValueError('Sparse gradient only supported for 2D array')
+        if self.grad is None:
+            self.grad = {}
+        for idx, g in gs:
+            if idx in self.grad:
+                self.grad[idx] += g
+            else:
+                self.grad[idx] = g.copy()
 
     # get dense grad
     def get_dense_grad(self):
@@ -75,6 +92,7 @@ class Tensor:
         assert isinstance(other, (int, float)), "currently only support scalar __mul__"
         return OpAdd().full_forward(self, b=None, alpha_a=float(other))
 
+
 # Parameter: special tensor
 class Parameter(Tensor):
     def __init__(self, data: xp.ndarray):
@@ -84,9 +102,11 @@ class Parameter(Tensor):
     def from_tensor(cls, tensor: Tensor):
         return Parameter(tensor.data)  # currently simply steal its data
 
+
 # shortcut for create tensor
 def astensor(t):
     return t if isinstance(t, Tensor) else Tensor(xp.asarray(t))
+
 
 # Operation
 class Op:
@@ -128,6 +148,7 @@ class Op:
     def backward(self):
         raise NotImplementedError()
 
+
 # computational graph
 class ComputationGraph:
     # global cg
@@ -147,6 +168,7 @@ class ComputationGraph:
         op.idx = len(self.ops)
         self.ops.append(op)
 
+
 # initializer
 class Initializer:
     @staticmethod
@@ -163,7 +185,9 @@ class Initializer:
 
     @staticmethod
     def xavier_uniform(shape: Sequence[int], gain=1.0):
-        raise NotImplementedError
+        a = gain * xp.sqrt(6 / (shape[0] + shape[1]))
+        return xp.random.uniform(-a, a, size=shape)
+
 
 # Model: collection of parameters
 class Model:
@@ -178,16 +202,17 @@ class Model:
         return param
 
     def save(self, path: str):
-        data = {f"p{i}": p.data for i,p in enumerate(self.params)}
+        data = {f"p{i}": p.data for i, p in enumerate(self.params)}
         xp.savez(path, **data)
 
     def load(self, path: str):
         data0 = xp.load(path)
-        data = {int(n[1:]):d for n,d in data0.items()}
-        for i,p in enumerate(self.params):
+        data = {int(n[1:]): d for n, d in data0.items()}
+        for i, p in enumerate(self.params):
             d = data[i]
             assert d.shape == p.shape
             p.data = d
+
 
 # Trainer
 class Trainer:
@@ -202,6 +227,7 @@ class Trainer:
 
     def update(self):  # to be implemented
         raise NotImplementedError()
+
 
 class SGDTrainer(Trainer):
     def __init__(self, model: Model, lrate=0.1):
@@ -230,7 +256,41 @@ class SGDTrainer(Trainer):
 
 class MomentumTrainer(Trainer):
     def __init__(self, model: Model, lrate=0.1, mrate=0.99):
-        raise NotImplementedError
+        super().__init__(model)
+        self.lrate = lrate
+        self.mrate = mrate
+        self.momemtum = []
+
+    def update(self):
+        lrate, mrate = self.lrate, self.mrate
+        if len(self.momemtum) == 0:
+            self.momemtum = [xp.zeros_like(p.data) for p in self.model.params]
+        assert len(self.momemtum) == len(self.model.params)
+
+        for pid, p in enumerate(self.model.params):
+            if p.grad is not None:
+                if isinstance(p.grad, dict):  # sparsely update to save time!
+                    self.update_sparse(p, pid, p.grad, lrate, mrate)
+                else:
+                    self.update_dense(p, pid, p.grad, lrate, mrate)
+            # clean grad
+            p.grad = None
+        # --
+
+    def update_dense(self, p: Parameter, pid: int, g: xp.ndarray, lrate: float, mrate: float):
+        m = self.momemtum[pid]
+        m = mrate * m + (1 - mrate) * g
+        p.data -= lrate * m
+        self.momemtum[pid] = m
+
+    def update_sparse(self, p: Parameter, pid: int, gs: Dict[int, xp.ndarray], lrate: float, mrate: float):
+        m = self.momemtum[pid]
+        m = mrate * m
+        for widx, arr in gs.items():
+            m[widx] += (1 - mrate) * arr
+        p.data -= lrate * m
+        self.momemtum[pid] = m
+
 
 # --
 
@@ -239,9 +299,11 @@ class MomentumTrainer(Trainer):
 def reset_computation_graph():
     return ComputationGraph.get_cg(reset=True)
 
+
 def forward(t: Tensor):
     # since we calculate greedily, the result are already there!!
     return asnumpy(t.data)
+
 
 def backward(t: Tensor, alpha=1.):
     # first put grad to the start one
@@ -251,9 +313,10 @@ def backward(t: Tensor, alpha=1.):
     assert op is not None, "Cannot backward on tensor since no op!!"
     # backward the whole graph!!
     cg = ComputationGraph.get_cg()
-    for idx in reversed(range(op.idx+1)):
+    for idx in reversed(range(op.idx + 1)):
         cg.ops[idx].backward()
     # --
+
 
 ### Helper
 def log_softmax(x: xp.ndarray, axis=-1):
@@ -262,11 +325,25 @@ def log_softmax(x: xp.ndarray, axis=-1):
     logsumexp = xp.log(xp.exp(x2).sum(axis=axis, keepdims=True))  # [*, 1, *]
     return x2 - logsumexp
 
+
 ### Backpropable functions
 
 class OpLookup(Op):
     def __init__(self):
-        raise NotImplementedError
+        super().__init__()
+
+    def forward(self, emb: Tensor, indexes: List[int]):
+        if not isinstance(indexes, xp.ndarray):
+            indexes = xp.asarray(indexes)
+        t_lookup = Tensor(emb.data[indexes])
+        self.store_ctx(emb=emb, t_lookup=t_lookup, indexes=indexes)
+        return t_lookup
+
+    def backward(self):
+        emb, t_lookup, indexes = self.get_ctx('emb', 't_lookup', 'indexes')
+        if t_lookup.grad is not None:
+            emb.accumulate_grad_sparse([(int(i), g) for i, g in zip(indexes, t_lookup.grad)])
+
 
 class OpSum(Op):
     def __init__(self):
@@ -286,24 +363,88 @@ class OpSum(Op):
             g0 = xp.expand_dims(t_sum.grad, axis)
             g = xp.repeat(g0, reduce_size, axis=axis)
             emb.accumulate_grad(g)
-        # --
+
 
 class OpMax(Op):
     def __init__(self):
         raise NotImplementedError
+
+    def __init__(self):
+        super().__init__()
+
+    # [..., K, ...] -> [..., ...]
+    def forward(self, emb: Tensor, axis: int):
+        argmax_ind = xp.argmax(emb.data, axis)
+        t_max = Tensor(xp.max(emb.data, axis))
+        self.store_ctx(emb=emb, t_max=t_max, argmax_ind=argmax_ind, axis=axis)
+        return t_max
+
+    def backward(self):
+        emb, t_max, argmax_ind, axis = self.get_ctx('emb', 't_max', 'argmax_ind', 'axis')
+        if t_max.grad is not None:
+            ind = xp.reshape(argmax_ind, -1)
+            g = xp.zeros_like(t_max.grad, shape=(ind.shape[0], emb.data.shape[axis]))
+            g[xp.arange(ind.shape[0]), ind] = t_max.grad
+            g = xp.reshape(g, (*t_max.grad.shape, -1))
+            g = xp.swapaxes(g, axis, -1)
+            emb.accumulate_grad(g)
+
 
 class OpAvg(Op):
     # NOTE: Implementation of OpAvg is optional, it can be skipped if you wish
     def __init__(self):
         super().__init__()
 
+    # [..., K, ...] -> [..., ...]
+    def forward(self, emb: Tensor, axis: int):
+        reduce_size = emb.data.shape[axis]
+        t_avg = Tensor(emb.data.mean(axis=axis))
+        self.store_ctx(emb=emb, t_avg=t_avg, axis=axis, reduce_size=reduce_size)
+        return t_avg
+
+    def backward(self):
+        emb, t_avg, axis, reduce_size = self.get_ctx('emb', 't_avg', 'axis', 'reduce_size')
+        if t_avg.grad is not None:
+            g0 = xp.expand_dims(t_avg.grad / reduce_size, axis)
+            g = xp.repeat(g0, reduce_size, axis=axis)
+            emb.accumulate_grad(g)
+
+
 class OpDot(Op):
     def __init__(self):
-        raise NotImplementedError
+        super().__init__()
+
+    def forward(self, a: Tensor, b: Tensor):
+        if len(a.data.shape) != 2 or len(b.data.shape) != 1:
+            raise ValueError('OpDot only supports 1D tensors')
+        out = Tensor(xp.dot(a.data, b.data))
+        self.store_ctx(a=a, b=b, a_data=a.data.copy(), b_data=b.data.copy(), out=out)
+        return out
+
+    def backward(self):
+        a, b, a_data, b_data, out = self.get_ctx('a', 'b', 'a_data', 'b_data', 'out')
+        if out.grad is not None:
+            a.accumulate_grad(xp.outer(out.grad, b_data))
+            b.accumulate_grad(a_data.T.dot(out.grad))
+
 
 class OpTanh(Op):
     def __init__(self):
-        raise NotImplementedError
+        super().__init__()
+
+    # [N] -> [N]
+    def forward(self, t: Tensor):
+        arr_tanh = xp.tanh(t.data)
+        t_tanh = Tensor(arr_tanh)
+        self.store_ctx(t=t, t_tanh=t_tanh, arr_tanh=arr_tanh)
+        return t_tanh
+
+    def backward(self):
+        t, t_tanh, arr_tanh = self.get_ctx('t', 't_tanh', 'arr_tanh')
+        if t_tanh.grad is not None:
+            grad_t = (1 - arr_tanh ** 2) * t_tanh.grad
+            t.accumulate_grad(grad_t)
+
 
 class OpRelu(Op):
     def __init__(self):
@@ -311,7 +452,7 @@ class OpRelu(Op):
 
     # [N] -> [N]
     def forward(self, t: Tensor):
-        arr_relu = t.data  # [N]
+        arr_relu = t.data.copy()  # [N]  Create a new copy of t.data to avoid in-place modification (fixed by Yanlin)
         arr_relu[arr_relu < 0.0] = 0.0
         t_relu = Tensor(arr_relu)
         self.store_ctx(t=t, t_relu=t_relu, arr_relu=arr_relu)
@@ -323,6 +464,7 @@ class OpRelu(Op):
             grad_t = xp.where(arr_relu > 0.0, 1.0, 0.0) * t_relu.grad  # [N]
             t.accumulate_grad(grad_t)
         # --
+
 
 class OpLogloss(Op):
     def __init__(self):
@@ -352,9 +494,10 @@ class OpLogloss(Op):
                 grad_logits *= loss_t.grad
             else:
                 grad_logits[xp.arange(len(grad_logits.shape[0])), arr_tags] -= 1.
-                grad_logits *= loss_t.grad[:,None]
+                grad_logits *= loss_t.grad[:, None]
             logits.accumulate_grad(grad_logits)
         # --
+
 
 class OpAdd(Op):
     def __init__(self):
@@ -377,13 +520,14 @@ class OpAdd(Op):
                 b.accumulate_grad(alpha_b * t_add.grad)
         # --
 
+
 class OpDropout(Op):
     def __init__(self):
         super().__init__()
 
     def forward(self, x: Tensor, drop: float, is_training: bool):
         if is_training:
-            arr_mask = xp.random.binomial(1, 1.-drop, x.shape) * (1./(1-drop))
+            arr_mask = xp.random.binomial(1, 1. - drop, x.shape) * (1. / (1 - drop))
             arr_drop = (x.data * arr_mask)
             t_drop = Tensor(arr_drop)
         else:
@@ -401,13 +545,32 @@ class OpDropout(Op):
             x.accumulate_grad(arr_mask * t_drop.grad)
         # --
 
+
 # --
 # shortcuts
 def lookup(W_emb, words): return OpLookup().full_forward(W_emb, words)
+
+
 def sum(emb, axis): return OpSum().full_forward(emb, axis)
+
+
+def avg(emb, axis): return OpAvg().full_forward(emb, axis)
+
+
+def max(emb, axis): return OpMax().full_forward(emb, axis)
+
+
 def dot(W_h_i, h): return OpDot().full_forward(W_h_i, h)
+
+
 def tanh(param): return OpTanh().full_forward(param)
+
+
 def relu(param): return OpRelu().full_forward(param)
+
+
 def log_loss(my_scores, tag): return OpLogloss().full_forward(my_scores, tag)
+
+
 def dropout(x, drop, is_training): return OpDropout().full_forward(x, drop, is_training)
 # --
