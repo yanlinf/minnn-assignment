@@ -24,20 +24,20 @@ def get_args():
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
     parser.add_argument("--ker_sizes", type=int, nargs='+', default=[3, 4, 5])
     parser.add_argument("--beta1", type=float, default=0.9)
-    parser.add_argument("--weight_decay", type=float, default=1e-5)
+    parser.add_argument("--weight_decay", type=float, default=1e-6)
 
     parser.add_argument("--emb_size", type=int, default=300)
-    parser.add_argument("--hid_size", type=int, default=100)
+    parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
-    parser.add_argument("--word_drop", type=float, default=0.1)
-    parser.add_argument("--emb_drop", type=float, default=0.4)
+    parser.add_argument("--word_drop", type=float, default=0.2)
+    parser.add_argument("--emb_drop", type=float, default=0.333)
     parser.add_argument("--hid_drop", type=float, default=0.5)
     parser.add_argument("--pooling_method", type=str, default="max", choices=["sum", "avg", "max"])
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--lrate", type=float, default=0.0003)
     parser.add_argument("--lrate_decay", type=float, default=1.)  # 1. means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
-    parser.add_argument("--accu_step", type=int, default=50)  # this is actually batch size!
+    parser.add_argument("--accu_step", type=int, default=10)  # this is actually batch size!
     parser.add_argument("--model", type=str, default="model.npz")  # save/load model name
     parser.add_argument("--do_gradient_check", type=int, default=0)
     parser.add_argument("--dev_output", type=str, default="output.dev.txt")  # output for dev
