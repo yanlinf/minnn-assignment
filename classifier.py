@@ -2,6 +2,8 @@ from collections import defaultdict
 import os
 import time
 import random
+
+import minnn
 import minnn as mn
 import numpy as np
 import pickle
@@ -17,16 +19,17 @@ def get_args():
     parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
     parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
     parser.add_argument("--arch", type=str, default="dan", choices=['dan', 'cnn'])
+    parser.add_argument("--vocab_cutoff", type=int, default=15000)
     parser.add_argument("--ker_size", type=int, default=5)
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
     parser.add_argument("--word_drop", type=float, default=0.2)
     parser.add_argument("--emb_drop", type=float, default=0.333)
-    parser.add_argument("--hid_drop", type=float, default=0.333)
+    parser.add_argument("--hid_drop", type=float, default=0.5)
     parser.add_argument("--pooling_method", type=str, default="max", choices=["sum", "avg", "max"])
     parser.add_argument("--iters", type=int, default=20)
-    parser.add_argument("--lrate", type=float, default=0.015)
+    parser.add_argument("--lrate", type=float, default=0.001)
     parser.add_argument("--lrate_decay", type=float, default=1.)  # 1. means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
     parser.add_argument("--accu_step", type=int, default=10)  # this is actually batch size!
@@ -39,33 +42,44 @@ def get_args():
     return args
 
 
-def load_fasttext(filename, words, cutoff=None):
+def load_fasttext(filename, words):
+    xp = minnn.get_module()
     t0 = time.time()
     w2i = {w: i for i, w in enumerate(words)}
-    if False and os.path.exists('data/en.vec.npy'):
-        np.load(filename)
-    else:
-        n_hit = 0
-        with open(filename, 'r', encoding='utf-8') as fin:
-            n, d = map(int, fin.readline().split())
-            X = np.zeros((len(words), d), dtype=float)
-            for i, line in enumerate(fin):
-                if cutoff is not None and i >= cutoff:
-                    break
-                word, vec = line.rstrip().split(' ', 1)
-                if word in w2i:
-                    X[w2i[word]] = np.fromstring(vec, dtype=float, sep=' ')
-                    n_hit += 1
-        idx_unk = w2i['UNK']
-        for i, w in enumerate(words):
-            if w == 'UNK' and i != idx_unk:
-                X[i] = X[idx_unk]
+
+    n_hit = 0
+    with open(filename, 'r', encoding='utf-8') as fin:
+        n, d = map(int, fin.readline().split())
+        X = xp.zeros((len(words), d), dtype=float)
+        for i, line in enumerate(fin):
+            word, vec = line.rstrip().split(' ', 1)
+            if word in w2i:
+                X[w2i[word]] = xp.asarray(np.fromstring(vec, dtype=float, sep=' '))
                 n_hit += 1
 
-        np.save('data/en.vec.npy', X)
-        print(f'OOV rate: {1 - n_hit / len(words):.2%}')
+    print(f'OOV rate: {1 - n_hit / len(words):.2%}')
     print(f'Fasttext vectors loaded in {time.time() - t0:.2f} seconds')
     return X
+
+
+def construct_vocab(filename, cutoff=15000):
+    t2i = {}
+    special_tokens = ['UNK', 'PAD']
+    word_counts = {}
+    with open(filename, "r", encoding="utf-8") as f:
+        for line in f:
+            tag, words = line.lower().strip().split(" ||| ")
+            if tag not in t2i:
+                t2i[tag] = len(t2i)
+            for w in words.split(' '):
+                word_counts[w] = word_counts.get(w, 0) + 1
+    word_counts = list(word_counts.items())
+    word_counts.sort(key=lambda x: -x[1])
+    i2t = [None] * len(t2i)
+    for t, i in t2i.items():
+        i2t[i] = t
+    i2w = special_tokens + [x[0] for x in word_counts[:cutoff - len(special_tokens)]]
+    return i2t, i2w
 
 
 def main():
@@ -73,38 +87,30 @@ def main():
     _seed = os.environ.get("MINNN_SEED", 12341)
     random.seed(_seed)
     np.random.seed(_seed)
-    # --
-    # Functions to read in the corpus
-    w2i = defaultdict(lambda: len(w2i))  # map of word str to word index
-    t2i = defaultdict(lambda: len(t2i))  # map of tag str to tag index
-    UNK = w2i["<unk>"]  # UNK will be idx=0
 
     def read_dataset(filename):
+        unk_id = w2i['UNK']
+        pad_id = w2i['PAD']
         with open(filename, "r", encoding="utf-8") as f:
             for line in f:
                 tag, words = line.lower().strip().split(" ||| ")
-                wids = [w2i[x] for x in words.split(" ")]
+                wids = [w2i.get(x, unk_id) for x in words.split(" ")]
                 if len(wids) < args.ker_size:
-                    wids += [UNK] * (args.ker_size - len(wids))
+                    wids += [pad_id] * (args.ker_size - len(wids))
                 yield (wids, t2i[tag])
 
     # Read in the data
+    i2t, i2w = construct_vocab(args.train, cutoff=args.vocab_cutoff)
+
+    w2i = {w: i for i, w in enumerate(i2w)}
+    t2i = {t: i for i, t in enumerate(i2t)}
     train = list(read_dataset(args.train))  # read the train set and map to indexes
-    w2i = defaultdict(lambda: UNK, w2i)  # after collecting training, no longer accept new words
     dev = list(read_dataset(args.dev))  # read the dev set and map to indexes
     test = list(read_dataset(args.test))  # read the test set and map to indexes
+
     nwords = len(w2i)  # number of words in the vocab
     ntags = len(t2i)  # number of tags
-    # --
-    # get back-mappings (idx to str) for outputting
-    i2w = ["UNK"] * len(w2i)  # back-mapping: word index to word str
-    i2t = ["UNK"] * len(t2i)  # back-mapping: tag index to tag str
-    for _w, _i in w2i.items():  # fill the back-mapping of words
-        if _i > 0:  # no filling of UNK and new words (queried but not in training because of defaultdict)
-            i2w[_i] = _w
-    for _t, _i in t2i.items():  # fill the back-mapping of tags
-        i2t[_i] = _t
-    # --
+    UNK = w2i['UNK']
 
     print(f'Vocab size: {len(i2w)}')
 
