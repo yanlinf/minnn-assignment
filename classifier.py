@@ -16,11 +16,14 @@ def get_args():
     parser.add_argument("--train", type=str, default="data/sst-train.txt")
     parser.add_argument("--dev", type=str, default="data/sst-dev.txt")
     parser.add_argument("--test", type=str, default="data/sst-test.txt")
+
+    # Added by Yanlin
     parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
     parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
-    parser.add_argument("--arch", type=str, default="dan", choices=['dan', 'cnn'])
+    parser.add_argument("--arch", type=str, default="cnn", choices=['dan', 'cnn'])
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
     parser.add_argument("--ker_size", type=int, default=5)
+
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
     parser.add_argument("--hid_layer", type=int, default=2)
@@ -29,7 +32,7 @@ def get_args():
     parser.add_argument("--hid_drop", type=float, default=0.5)
     parser.add_argument("--pooling_method", type=str, default="max", choices=["sum", "avg", "max"])
     parser.add_argument("--iters", type=int, default=20)
-    parser.add_argument("--lrate", type=float, default=0.001)
+    parser.add_argument("--lrate", type=float, default=0.0003)
     parser.add_argument("--lrate_decay", type=float, default=1.)  # 1. means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
     parser.add_argument("--accu_step", type=int, default=10)  # this is actually batch size!
