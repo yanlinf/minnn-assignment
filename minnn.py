@@ -33,6 +33,10 @@ def set_random_seed(seed: int):  # allow reset!
     xp.random.seed(seed)
 
 
+def get_module():
+    return xp
+
+
 # --
 
 # --
