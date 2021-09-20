@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
     parser.add_argument("--arch", type=str, default="cnn", choices=['dan', 'cnn'])
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
-    parser.add_argument("--ker_size", type=int, default=5)
+    parser.add_argument("--ker_sizes", type=int, nargs='+', default=[3, 4, 5])
 
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
@@ -94,12 +94,13 @@ def main():
     def read_dataset(filename):
         unk_id = w2i['UNK']
         pad_id = w2i['PAD']
+        min_len = max(args.ker_sizes)
         with open(filename, "r", encoding="utf-8") as f:
             for line in f:
                 tag, words = line.lower().strip().split(" ||| ")
                 wids = [w2i.get(x, unk_id) for x in words.split(" ")]
-                if len(wids) < args.ker_size:
-                    wids += [pad_id] * (args.ker_size - len(wids))
+                if len(wids) < min_len:
+                    wids += [pad_id] * (min_len - len(wids))
                 yield (wids, t2i[tag])
 
     # Read in the data
@@ -141,9 +142,9 @@ def main():
         pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
     elif args.arch == 'cnn':
         W_emb = model.add_parameters((nwords, EMB_SIZE))
-        W_conv = model.add_parameters((args.ker_size, EMB_SIZE, HID_SIZE))
-        b_conv = model.add_parameters((HID_SIZE,))
-        W_sm = model.add_parameters((ntags, HID_SIZE))
+        W_conv = [model.add_parameters((ksize, EMB_SIZE, HID_SIZE)) for ksize in args.ker_sizes]
+        b_conv = [model.add_parameters((HID_SIZE,)) for _ in args.ker_sizes]
+        W_sm = model.add_parameters((ntags, HID_SIZE * len(args.ker_sizes)))
         b_sm = model.add_parameters((ntags))
         pooling_f = {"sum": mn.sum, "avg": mn.avg, "max": mn.max}[args.pooling_method]
 
@@ -187,9 +188,10 @@ def main():
         # --
         emb = mn.lookup(W_emb, words)  # [len, D]
         emb = mn.dropout(emb, args.emb_drop, is_training)
-        conv = mn.conv1d(emb, W_conv, b_conv)
-        conv = mn.relu(conv)
-        h = pooling_f(conv, axis=0)
+        hs = [mn.conv1d(emb, W_conv_i, b_conv_i) for W_conv_i, b_conv_i in zip(W_conv, b_conv)]
+        hs = [mn.relu(h) for h in hs]
+        hs = [pooling_f(h, axis=0) for h in hs]
+        h = mn.concat(hs, 0)
         h = mn.dropout(h, args.hid_drop, is_training)
         return mn.dot(W_sm, h) + b_sm  # [C]
 
