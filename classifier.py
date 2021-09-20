@@ -23,6 +23,7 @@ def get_args():
     parser.add_argument("--arch", type=str, default="cnn", choices=['dan', 'cnn'])
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
     parser.add_argument("--ker_sizes", type=int, nargs='+', default=[3, 4, 5])
+    parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
 
     parser.add_argument("--emb_size", type=int, default=300)
@@ -36,7 +37,7 @@ def get_args():
     parser.add_argument("--lrate", type=float, default=0.0003)
     parser.add_argument("--lrate_decay", type=float, default=1.)  # 1. means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
-    parser.add_argument("--accu_step", type=int, default=10)  # this is actually batch size!
+    parser.add_argument("--accu_step", type=int, default=50)  # this is actually batch size!
     parser.add_argument("--model", type=str, default="model.npz")  # save/load model name
     parser.add_argument("--do_gradient_check", type=int, default=0)
     parser.add_argument("--dev_output", type=str, default="output.dev.txt")  # output for dev
@@ -126,7 +127,7 @@ def main():
     elif args.opt == 'momentum':
         trainer = mn.MomentumTrainer(model, lrate=args.lrate, mrate=args.mrate)
     elif args.opt == 'adam':
-        trainer = mn.AdamTrainer(model, lrate=args.lrate, weight_decay=args.weight_decay)
+        trainer = mn.AdamTrainer(model, lrate=args.lrate, weight_decay=args.weight_decay, beta1=args.beta1)
 
     # Define the model
     EMB_SIZE = args.emb_size
