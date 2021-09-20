@@ -198,8 +198,11 @@ class Model:
     def __init__(self):
         self.params: List[Parameter] = []
 
-    def add_parameters(self, shape, initializer='normal', **initializer_kwargs):
-        init_f = getattr(Initializer, initializer)
+    def add_parameters(self, shape, initializer='xavier_uniform', **initializer_kwargs):
+        if isinstance(shape, int) or len(shape) == 1:
+            init_f = getattr(Initializer, 'constant')
+        else:
+            init_f = getattr(Initializer, initializer)
         data = init_f(shape, **initializer_kwargs)
         param = Parameter(data)
         self.params.append(param)
