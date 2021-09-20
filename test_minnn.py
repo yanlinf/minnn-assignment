@@ -127,6 +127,21 @@ def test_conv1d(test_mn):
     assert is_allclose(tb.get_dense_grad(), g_b)
 
 
+def test_concat(test_mn):
+    x1 = np.random.randn(2, 4, 3)
+    x2 = np.random.randn(2, 9, 3)
+    x3 = np.random.randn(2, 1, 3)
+    tensors = [test_mn.astensor(x) for x in (x1, x2, x3)]
+    out = test_mn.concat(tensors, 1)
+    assert is_allclose(out.data, np.concatenate((x1, x2, x3), 1))
+    g_out = np.random.randn(2, 14, 3)
+    out.accumulate_grad(g_out)
+    out.op.backward()
+    assert is_allclose(tensors[0].get_dense_grad(), g_out[:, 0:4])
+    assert is_allclose(tensors[1].get_dense_grad(), g_out[:, 4:13])
+    assert is_allclose(tensors[2].get_dense_grad(), g_out[:, 13:14])
+
+
 def test_tanh(test_mn):
     x = test_mn.astensor([0., 1., 2., 3.])
     v = test_mn.tanh(x)
@@ -173,6 +188,7 @@ def main(minnn: str):
         ("avg", 1.),
         ("max", 1.),
         ("conv1d", 1.),
+        ("concat", 1.),
     ]
     for name, weight in test_table:
         test_f = globals()[f"test_{name}"]

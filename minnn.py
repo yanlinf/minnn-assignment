@@ -601,6 +601,34 @@ class OpConv1D(Op):
             bias.accumulate_grad(g_bias)
 
 
+class OpConcat(Op):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensors: List[Tensor], axis: int = 0):
+        assert all(tensors[0].shape[:axis] == t.shape[:axis] for t in tensors[1:])
+        assert all(tensors[0].shape[axis + 1:] == t.shape[axis + 1:] for t in tensors[1:])
+        out_shape = list(tensors[0].shape)
+        out_shape[axis] = int(np.sum([t.shape[axis] for t in tensors]))
+        out = xp.zeros(out_shape, dtype=tensors[0].data.dtype)
+        i = 0
+        for t in tensors:
+            j = i + t.shape[axis]
+            out[(slice(None),) * axis + (slice(i, j),)] = t.data
+            i = j
+        out = Tensor(out)
+        self.store_ctx(tensors=tensors, out=out, axis=axis)
+        return out
+
+    def backward(self):
+        tensors, out, axis = self.get_ctx('tensors', 'out', 'axis')
+        i = 0
+        for t in tensors:
+            j = i + t.shape[axis]
+            t.accumulate_grad(out.grad[(slice(None),) * axis + (slice(i, j),)])
+            i = j
+
+
 class OpLogloss(Op):
     def __init__(self):
         super().__init__()
@@ -714,3 +742,6 @@ def batchconv1d(x, weight, bias): return OpBatchConv1D().full_forward(x, weight,
 
 
 def conv1d(x, weight, bias): return OpConv1D().full_forward(x, weight, bias)
+
+
+def concat(tensors, axis): return OpConcat().full_forward(tensors, axis)
