@@ -23,6 +23,7 @@ def get_args():
     parser.add_argument("--arch", type=str, default="cnn", choices=['dan', 'cnn'])
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
     parser.add_argument("--ker_sizes", type=int, nargs='+', default=[3, 4, 5])
+    parser.add_argument("--weight_decay", type=float, default=1e-5)
 
     parser.add_argument("--emb_size", type=int, default=300)
     parser.add_argument("--hid_size", type=int, default=64)
@@ -125,7 +126,7 @@ def main():
     elif args.opt == 'momentum':
         trainer = mn.MomentumTrainer(model, lrate=args.lrate, mrate=args.mrate)
     elif args.opt == 'adam':
-        trainer = mn.AdamTrainer(model, lrate=args.lrate)
+        trainer = mn.AdamTrainer(model, lrate=args.lrate, weight_decay=args.weight_decay)
 
     # Define the model
     EMB_SIZE = args.emb_size
