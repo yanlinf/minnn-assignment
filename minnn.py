@@ -292,7 +292,7 @@ class MomentumTrainer(Trainer):
 
     def update_sparse(self, p: Parameter, pid: int, gs: Dict[int, xp.ndarray], lrate: float, mrate: float):
         m = self.momemtum[pid]
-        m = mrate * m
+        m *= mrate
         for widx, arr in gs.items():
             m[widx] += (1 - mrate) * arr
         p.data -= lrate * m
@@ -331,9 +331,9 @@ class AdamTrainer(Trainer):
         self.m[pid] += (1 - self.beta1) * g
         self.v[pid] *= self.beta2
         self.v[pid] += (1 - self.beta2) * (g ** 2)
-        mt = self.m[pid] / (1 - self.beta1 ** self.t)
-        vt = self.v[pid] / (1 - self.beta2 ** self.t)
-        p.data -= self.lrate * mt / xp.sqrt(vt + self.eps)
+        bc1 = 1 - self.beta1 ** self.t
+        bc2 = 1 - self.beta2 ** self.t
+        p.data -= (self.lrate * bc1 / math.sqrt(bc2)) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
         p.data -= self.lrate * self.weight_decay * p.data
 
     def update_sparse(self, p: Parameter, pid: int, gs: Dict[int, xp.ndarray]):
@@ -343,10 +343,10 @@ class AdamTrainer(Trainer):
         self.v[pid] *= self.beta2
         for widx, arr in gs.items():
             self.v[pid][widx] += (1 - self.beta2) * (arr ** 2)
-        mt = self.m[pid] / (1 - self.beta1 ** self.t)
-        vt = self.v[pid] / (1 - self.beta2 ** self.t)
-        p.data -= self.lrate * mt / xp.sqrt(vt + self.eps)
-        p.data -= self.lrate * self.weight_decay * p.data
+        bc1 = 1 - self.beta1 ** self.t
+        bc2 = 1 - self.beta2 ** self.t
+        p.data -= (self.lrate * bc1 / math.sqrt(bc2)) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
+        # p.data -= self.lrate * self.weight_decay * p.data
 
 
 # --
