@@ -333,7 +333,7 @@ class AdamTrainer(Trainer):
         self.v[pid] += (1 - self.beta2) * (g ** 2)
         bc1 = 1 - self.beta1 ** self.t
         bc2 = 1 - self.beta2 ** self.t
-        p.data -= (self.lrate * bc1 / math.sqrt(bc2)) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
+        p.data -= (self.lrate * math.sqrt(bc2) / bc1) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
         p.data -= self.lrate * self.weight_decay * p.data
 
     def update_sparse(self, p: Parameter, pid: int, gs: Dict[int, xp.ndarray]):
@@ -345,7 +345,7 @@ class AdamTrainer(Trainer):
             self.v[pid][widx] += (1 - self.beta2) * (arr ** 2)
         bc1 = 1 - self.beta1 ** self.t
         bc2 = 1 - self.beta2 ** self.t
-        p.data -= (self.lrate * bc1 / math.sqrt(bc2)) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
+        p.data -= (self.lrate * math.sqrt(bc2) / bc1) * self.m[pid] / xp.sqrt(self.v[pid] + self.eps)
         # p.data -= self.lrate * self.weight_decay * p.data
 
 
