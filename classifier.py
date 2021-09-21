@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument("--emb_drop", type=float, default=0.333)
     parser.add_argument("--hid_drop", type=float, default=0.5)
     parser.add_argument("--pooling_method", type=str, default="max", choices=["sum", "avg", "max"])
-    parser.add_argument("--iters", type=int, default=20)
+    parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--lrate", type=float, default=0.0003)
     parser.add_argument("--lrate_decay", type=float, default=1.)  # 1. means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
