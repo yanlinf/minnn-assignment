@@ -18,7 +18,7 @@ def get_args():
     parser.add_argument("--test", type=str, default="data/sst-test.txt")
 
     # Added by Yanlin
-    parser.add_argument("--emb", type=str, default="data/wiki-news-300d-1M.vec")
+    parser.add_argument("--emb", type=str, default="wiki-news-300d-1M.vec")
     parser.add_argument("-opt", "--opt", type=str, default="adam", choices=['sgd', 'momentum', 'adam'])
     parser.add_argument("--arch", type=str, default="cnn", choices=['dan', 'cnn'])
     parser.add_argument("--vocab_cutoff", type=int, default=15000)
